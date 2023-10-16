@@ -4,10 +4,11 @@ const cors = require('cors');
 require('dotenv').config()
 const jwt = require('jsonwebtoken');
 const  morgan = require('morgan')
+const nodemailer = require("nodemailer");
 const port = process.env.PORT || 5000
+const stripe = require('stripe')(process.env.PAYMENT_SECRET_KEY);
 
 
-//middleware
 
 const corsOptions = {
     origin: '*',
@@ -18,7 +19,7 @@ app.use(cors());
 app.use(express.json());
 app.use (morgan('dev'))
 
-
+// pktv ladu ehlo essh
 
 
 
@@ -41,10 +42,10 @@ const verifyJWT = (req, res, next) => {
   if(!authorization){
     return res.status(401).send({error:true, message:'Unauthorized Access'})
   }
-  // console.log(authorization)
+  // //console.log(authorization)
   const token= authorization.split(' ')[1]
  
-  console.log(token)
+  //console.log(token)
   //token verify
   jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
     if(err){
@@ -54,6 +55,33 @@ const verifyJWT = (req, res, next) => {
     next()
   })
 
+}
+
+//send mail functions
+
+const sendMail=(emailData, emailAddress)=>{
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL,
+      pass: process.env.EMAIL_PASS
+    }
+  });
+  const mailOptions = {
+    from: process.env.EMAIL,
+    to: emailAddress,
+    subject: emailData.subject,
+   html: `<p>${emailData?.message}</p>`
+  };
+  
+  transporter.sendMail(mailOptions, function(error, info){
+    if (error) {
+   console.log(error);
+    } else {
+      console.log('Email sent: ' + info.response);
+      // do something useful
+    }
+  });
 }
 
 async function run() {
@@ -66,6 +94,23 @@ async function run() {
     await client.connect();
     // Send a ping to confirm a successful connection
 
+
+    //Generate Client Secret
+    app.post('/create-payment-intent', verifyJWT, async(req, res) =>{
+      const {price} = req.body;
+      console.log( price)
+      if(price){
+        const amount = parseFloat(price) * 100;
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: amount,
+          currency: 'USD',
+          payment_method_types: ['card']
+        })
+        res.send({
+          clientSecret:paymentIntent.client_secret,
+        })
+      }
+    })
 
     // Generate Jwt token
         app.post('/jwt', async (req, res) => {
@@ -80,16 +125,16 @@ async function run() {
    // Save users
     app.put('/users/:email', async (req, res) => {
       const email = req.params.email;
-      console.log(email)
+       //console.log(email)
       const user = req.body;
-      console.log(user)
+       //console.log(user)
       const query ={email: email};
       const options = {upsert: true};
       const updateDoc = {
         $set: user,
       }
       const result = await usersCollection.updateOne(query, updateDoc, options)
-      console.log(result)
+       //console.log(result)
       res.send(result)
     })
 
@@ -120,7 +165,7 @@ async function run() {
     //get filtered rooms for host
     app.get('/rooms/:email',verifyJWT, async (req, res) => {
       const decodedEmail = req.decoded.email
-      console.log(decodedEmail)
+       //console.log(decodedEmail)
       const email= req.params.email;
       if(email !==decodedEmail){
           return res.status(403).send({error:true, message:'Forbidden Access'})
@@ -143,11 +188,26 @@ async function run() {
  //saved a room in database
  app.post('/rooms', async (req, res) => {
   const room = req.body;
-  console.log(room)
+  //console.log(room)
   const result = await roomsCollection.insertOne(room);
   res.send(result);
 })
 
+
+// update a room in database
+app.put('/rooms/:id', verifyJWT, async(req, res) => {
+ const room = req.body;
+ console.log(room)
+ 
+ const filter = {_id: new ObjectId(req.params.id)};
+ const options = {upsert: true};
+ const updateDoc ={
+  $set: room,
+ }
+ const result = await roomsCollection.updateOne(filter, updateDoc, options);
+ res.send(result)
+})
+  
 
 //update room booking status
 app.patch('/rooms/status/:id', async (req, res) => {
@@ -191,8 +251,27 @@ app.get('/bookings/host', async (req, res) => {
 //saved a booking in database
 app.post('/bookings', async (req, res) => {
   const booking = req.body;
-  console.log(booking)
+  //console.log(booking)
   const result = await bookingsCollection.insertOne(booking);
+
+  //send confirmation email to guest email account
+  sendMail({
+    subject: 'Booking Successful!',
+    message:`Booking Id: ${result?.insertedId}, Transaction Id: ${booking?.transactionId}`
+  },
+  booking?.guest?.email
+  )
+
+
+
+  //send confirmation email to host account
+  sendMail({
+    subject: 'Your room got booked!',
+    message:`Booking Id: ${result?.insertedId}, Transaction Id: ${booking?.transactionId}`
+  },
+  booking?.host
+  )
+
   res.send(result);
 })
 
@@ -207,7 +286,7 @@ app.delete('/bookings/:id', async (req, res) => {
 
 
     await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    //console.log("Pinged your deployment. You successfully connected to MongoDB!");
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
@@ -220,5 +299,5 @@ app.get('/', (req, res) => {
 })
 
 app.listen(port, ()=>{
-    console.log(`Air Cnc running on ${port}`)
+    //console.log(`Air Cnc running on ${port}`)
 })
